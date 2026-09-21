@@ -17,11 +17,20 @@ Contract for the boundary function:
 
 * positional ``paddle.Tensor`` inputs only; capture constants by closure;
 * returns one Tensor, or a flat tuple/list of ``Tensor``/``None``;
-* pure computation -- the recompute pass never runs it, so a side effect there
-  would simply not happen;
+* pure computation with no random-state use -- the recompute pass never runs
+  the boundary, so an RNG-consuming op inside it (e.g. dropout) would advance
+  the first pass's random state but not the recompute pass's, silently
+  misaligning every random op that follows in the same recompute region;
 * floating point inputs are treated as requiring gradient and non-floating ones
   as not, so a float input that is semantically constant belongs in the closure;
 * not nested inside another boundary.
+
+Only valid inside a full-recompute region, and only when a backward will follow.
+The pass is told apart solely by ``tracer._has_grad``, which cannot distinguish
+the first recompute pass from plain inference, so the helper does not self-guard:
+the call site must fall back to plain execution when recompute is off or during
+inference. Otherwise ``_first_forward`` retains a frame that no backward ever
+consumes (a leak), and a grad-enabled call outside recompute hits an empty queue.
 
 Frames are paired by queue order, which relies on the scheduler replaying a
 boundary's recompute in the same order as its first forward. Schedules that
