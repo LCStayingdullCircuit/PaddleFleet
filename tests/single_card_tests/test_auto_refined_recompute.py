@@ -143,5 +143,69 @@ class TestAutoRefinedRecompute(unittest.TestCase):
             self._assert_same(expected[index], x.grad.detach(), f"grad {index}")
 
 
+class TestAutoRefinedRecomputeContract(unittest.TestCase):
+    """Error paths and both output shapes must be exercised, not just parity.
+
+    Driven directly: ``paddle.no_grad`` is how full recompute runs the first
+    pass, so the first/replay branches are reachable without a real recompute
+    region, and each error surfaces where it is raised.
+    """
+
+    def test_single_tensor_output_round_trips(self):
+        helper = AutoRefinedRecompute("point")
+        x = paddle.randn([_TOKENS, _HIDDEN])
+        with paddle.no_grad():
+            first = helper(paddle.nn.functional.relu, x)
+        self.assertIsInstance(first, paddle.Tensor)
+        out = helper(paddle.nn.functional.relu, x)
+        self.assertIsInstance(out, paddle.Tensor)
+        self.assertEqual(helper.pending, 0)
+
+    def test_rejects_a_non_tensor_input(self):
+        helper = AutoRefinedRecompute("point")
+        with self.assertRaisesRegex(TypeError, "must be Tensors"):
+            helper(lambda a, b: a * b, paddle.randn([_TOKENS, _HIDDEN]), 2.0)
+
+    def test_rejects_a_non_tensor_output(self):
+        helper = AutoRefinedRecompute("point")
+        with (
+            paddle.no_grad(),
+            self.assertRaisesRegex(TypeError, "Tensor or flat tuple"),
+        ):
+            helper(lambda t: {"y": t}, paddle.randn([_TOKENS, _HIDDEN]))
+
+    def test_rejects_a_replay_without_a_first_pass(self):
+        helper = AutoRefinedRecompute("point")
+        with self.assertRaisesRegex(RuntimeError, r"\[point\] no frame"):
+            helper(paddle.nn.functional.relu, paddle.randn([_TOKENS, _HIDDEN]))
+
+    def test_rejects_an_input_shape_change_between_passes(self):
+        helper = AutoRefinedRecompute("point")
+        with paddle.no_grad():
+            helper(paddle.nn.functional.relu, paddle.randn([_TOKENS, _HIDDEN]))
+        with self.assertRaisesRegex(RuntimeError, "input changed"):
+            helper(
+                paddle.nn.functional.relu,
+                paddle.randn([_TOKENS + 1, _HIDDEN]),
+            )
+
+    def test_returns_no_gradient_for_a_stop_gradient_input(self):
+        """A float input the outer graph does not want a gradient for still
+        accumulates one internally; handing it back is a hard error, so the
+        outer input's own flag decides what is returned."""
+        helper = AutoRefinedRecompute("point")
+        hidden = paddle.randn([_TOKENS, _HIDDEN])
+        hidden.stop_gradient = False
+        constant = paddle.full([_TOKENS, _HIDDEN], 2.0)
+        self.assertTrue(constant.stop_gradient)
+
+        with paddle.no_grad():
+            helper(paddle.multiply, hidden, constant)
+        helper(paddle.multiply, hidden, constant).sum().backward()
+
+        self.assertIsNotNone(hidden.grad)
+        self.assertIsNone(constant.grad)
+
+
 if __name__ == "__main__":
     unittest.main()
