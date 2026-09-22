@@ -724,6 +724,8 @@ def mhc_chunk_layout_text(config):
         f"{config.virtual_pipeline_model_parallel_size} => {chunk_size} layers "
         f"per chunk{note}:\n  " + "\n  ".join(spans)
     )
+
+
 def make_refined_recompute(owner, point, supported=True):
     """Return ``(enabled, boundary)`` for one refined-recompute point.
 

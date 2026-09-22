@@ -209,5 +209,40 @@ class TestNumericalEquivalence(unittest.TestCase):
             )
 
 
+class TestNoBackwardPathQueuesNothing(unittest.TestCase):
+    """A forward with no backward must not leave a frame behind.
+
+    The boundary reads only ``tracer._has_grad``, so an inference forward is
+    indistinguishable from a first recompute pass. Without the ``self.training``
+    guard each eval forward would queue a frame no backward consumes, and the
+    next training step would replay that stale frame instead of its own.
+    """
+
+    def test_eval_forwards_queue_no_frames(self):
+        attn = _build(**_RR_ON)
+        attn.eval()
+
+        x = paddle.randn([_BATCH, _SEQ, _HIDDEN])
+        with paddle.no_grad():
+            for _ in range(3):
+                attn(x, attention_mask=None)
+
+        self.assertEqual(attn._o_proj_rr.pending, 0)
+        # Plain path, so o_proj really ran each time rather than being skipped.
+        self.assertEqual(attn.o_proj_calls, 3)
+
+    def test_training_step_after_eval_still_balances(self):
+        attn = _build(**_RR_ON)
+
+        attn.eval()
+        x = paddle.randn([_BATCH, _SEQ, _HIDDEN])
+        with paddle.no_grad():
+            attn(x, attention_mask=None)
+
+        attn.train()
+        _run(attn)
+        self.assertEqual(attn._o_proj_rr.pending, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

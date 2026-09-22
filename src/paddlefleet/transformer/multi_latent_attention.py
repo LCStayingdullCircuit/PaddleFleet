@@ -1158,7 +1158,7 @@ class MultiLatentAttention(Attention):
             "mla_gate_output", get_current_layer(), core_attn_out
         )
 
-        if self.use_rr_o_proj:
+        if self.use_rr_o_proj and self.training:
             output, bias = self._o_proj_rr(self.o_proj, core_attn_out)
         else:
             output, bias = deferrable_linear(
