@@ -736,12 +736,17 @@ def make_refined_recompute(owner, point, supported=True):
     and there must be no virtual pipeline, which reorders replay against the
     first forward and would pair frames across chunks. A vetoed point warns
     rather than raises -- it only costs the speedup.
+
+    When ``refined_recompute.probe`` is active, every supported point gets a
+    measuring boundary regardless of ``recompute_modules``.
     """
     # Local import: recompute_utils is imported nearly everywhere, while
     # refined_recompute pulls in flash_attn and paddlefleet_ops.
     from paddlefleet.refined_recompute import AutoRefinedRecompute
+    from paddlefleet.refined_recompute.probe import PROBE
 
-    if not module_needs_refined_recompute(
+    calibrating = PROBE.active
+    if not calibrating and not module_needs_refined_recompute(
         point,
         owner.layer_number,
         owner.config,
@@ -759,6 +764,12 @@ def make_refined_recompute(owner, point, supported=True):
             f"virtual_pipeline={vpp}"
         )
         return False, None
+    if calibrating:
+        return True, PROBE.boundary(
+            point,
+            owner.layer_number,
+            getattr(owner, "is_mtp_layer", False),
+        )
     return True, AutoRefinedRecompute(point)
 
 
